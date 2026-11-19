@@ -180,7 +180,15 @@ class Base {
 			$live_slugs = array_merge( array_keys( $gu_plugins ), array_keys( $gu_themes ) );
 			$additions  = (array) get_site_option( 'git_updater_additions', [] );
 			foreach ( $additions as $addition ) {
-				$live_slugs[] = str_contains( $addition['type'], 'plugin' ) ? dirname( $addition['slug'] ) : $addition['slug'];
+				// Defensive: a malformed option (e.g. an empty string saved as
+				// `git_updater_additions`) casts to [''] and would fatal on a
+				// string offset. Skip anything that is not a proper entry.
+				if ( ! is_array( $addition ) ) {
+					continue;
+				}
+				$live_slugs[] = str_contains( (string) ( $addition['type'] ?? '' ), 'plugin' )
+					? dirname( (string) ( $addition['slug'] ?? '' ) )
+					: (string) ( $addition['slug'] ?? '' );
 			}
 			\Fragen\Git_Updater\DB\Repo_Cache_Table::instance()->prune_stale( $live_slugs );
 		}

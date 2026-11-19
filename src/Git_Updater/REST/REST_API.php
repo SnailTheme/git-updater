@@ -115,7 +115,7 @@ class REST_API {
 						'show_in_index'       => true,
 						'methods'             => WP_REST_Server::READABLE,
 						'callback'            => [ $this, 'get_api_data' ],
-						'permission_callback' => '__return_true',
+						'permission_callback' => [ $this, 'require_remote_auth' ],
 						'args'                => [
 							'slug' => [
 								'default'           => false,
@@ -132,7 +132,7 @@ class REST_API {
 						'show_in_index'       => false,
 						'methods'             => WP_REST_Server::CREATABLE,
 						'callback'            => [ $this, 'get_api_data' ],
-						'permission_callback' => '__return_true',
+						'permission_callback' => [ $this, 'require_remote_auth' ],
 						'args'                => [
 							'slug' => [
 								'default'           => false,
@@ -197,7 +197,7 @@ class REST_API {
 					'show_in_index'       => false,
 					'methods'             => WP_REST_Server::READABLE,
 					'callback'            => [ $this, 'get_download_token' ],
-					'permission_callback' => '__return_true',
+					'permission_callback' => [ $this, 'require_remote_auth' ],
 					'args'                => [
 						'slug' => [
 							'required'          => true,
@@ -220,14 +220,14 @@ class REST_API {
 					'show_in_index'       => false,
 					'methods'             => WP_REST_Server::READABLE,
 					'callback'            => [ $this, 'get_additions_api_data' ],
-					'permission_callback' => '__return_true',
+					'permission_callback' => [ $this, 'require_shared_key_auth' ],
 					'args'                => [],
 				],
 				[
 					'show_in_index'       => false,
 					'methods'             => WP_REST_Server::CREATABLE,
 					'callback'            => [ $this, 'get_additions_api_data' ],
-					'permission_callback' => '__return_true',
+					'permission_callback' => [ $this, 'require_shared_key_auth' ],
 					'args'                => [],
 				],
 			]
@@ -241,14 +241,14 @@ class REST_API {
 					'show_in_index'       => false,
 					'methods'             => WP_REST_Server::READABLE,
 					'callback'            => [ $this, 'get_additions_data' ],
-					'permission_callback' => '__return_true',
+					'permission_callback' => [ $this, 'require_shared_key_auth' ],
 					'args'                => [],
 				],
 				[
 					'show_in_index'       => false,
 					'methods'             => WP_REST_Server::CREATABLE,
 					'callback'            => [ $this, 'get_additions_data' ],
-					'permission_callback' => '__return_true',
+					'permission_callback' => [ $this, 'require_shared_key_auth' ],
 					'args'                => [],
 				],
 			]
@@ -523,7 +523,7 @@ class REST_API {
 		$gu_repos   = array_merge( $gu_plugins, $gu_themes );
 
 		// Don't allow non-shared repos via this API. Set via Additions tab.
-		$additions ??= (array) get_site_option( 'git_updater_additions', [] );
+		$additions ??= $this->additions_list();
 		if ( $this->is_hard_blocked( $slug, $additions ) ) {
 			return [ 'error' => 'Specified repo is not shared.' ];
 		}
@@ -690,7 +690,7 @@ class REST_API {
 		$gu_plugins = Singleton::get_instance( 'Fragen\Git_Updater\Plugin', $this )->get_plugin_configs();
 		$gu_themes  = Singleton::get_instance( 'Fragen\Git_Updater\Theme', $this )->get_theme_configs();
 		$gu_tokens  = array_merge( $gu_plugins, $gu_themes );
-		$additions  = (array) get_site_option( 'git_updater_additions', [] );
+		$additions  = $this->additions_list();
 
 		foreach ( $additions as $addition ) {
 			$slug = $this->get_addition_slug( (array) $addition );
@@ -715,7 +715,7 @@ class REST_API {
 	 * @return array<int, array<string, mixed>>
 	 */
 	public function get_additions_data() {
-		$additions = get_site_option( 'git_updater_additions', [] );
+		$additions = $this->additions_list();
 		$additions = array_filter(
 			$additions,
 			function ( $addition ) {
@@ -753,6 +753,20 @@ class REST_API {
 	}
 
 	/**
+	 * Read `git_updater_additions` as a well-formed list.
+	 *
+	 * The option can be malformed on some sites (e.g. an empty string, which
+	 * casts to `['']`). Normalize to a list containing only array entries so
+	 * every consumer can iterate and index safely, and so the `?array`-typed
+	 * helpers never receive a string.
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function additions_list(): array {
+		return array_values( array_filter( (array) get_site_option( 'git_updater_additions', [] ), 'is_array' ) );
+	}
+
+	/**
 	 * Check if a slug is flagged as using git-updater-lite in Additions.
 	 *
 	 * @param string                                $slug The package slug (folder name for plugins, theme slug for themes).
@@ -761,7 +775,7 @@ class REST_API {
 	 * @return bool
 	 */
 	private function has_uses_lite( string $slug, ?array $additions = null ): bool {
-		$additions ??= (array) get_site_option( 'git_updater_additions', [] );
+		$additions ??= $this->additions_list();
 		foreach ( $additions as $addition ) {
 			if ( $this->get_addition_slug( (array) $addition ) === $slug && ! empty( $addition['uses_lite'] ) ) {
 				return true;
@@ -797,7 +811,7 @@ class REST_API {
 	 * @return bool
 	 */
 	private function is_hard_blocked( string $slug, ?array $additions = null ): bool {
-		$additions ??= (array) get_site_option( 'git_updater_additions', [] );
+		$additions ??= $this->additions_list();
 		foreach ( $additions as $addition ) {
 			if ( $this->get_addition_slug( (array) $addition ) === $slug ) {
 				return ! empty( $addition['private_package'] );
@@ -805,6 +819,112 @@ class REST_API {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Fail-closed permission gate for the metadata, download-token and
+	 * Additions REST routes.
+	 *
+	 * The upstream default-deny gate keys on a repo's resolved `is_private`
+	 * flag, which fails OPEN when the GitHub meta fetch errors or is rate
+	 * limited (the flag stays unset and reads as "public"), handing an
+	 * anonymous caller a signed proxy link to a private package. This gate
+	 * does not consult repo privacy at all: these routes are served only to a
+	 * caller that is either a logged-in operator who may update plugins/themes,
+	 * or a remote caller presenting the shared Remote Management API key. It is
+	 * applied as the routes' `permission_callback`, so the handler never runs
+	 * for an unauthenticated caller.
+	 *
+	 * Note: this intentionally requires the API key even for public packages on
+	 * these routes. Our fleet distributes only private repositories (which
+	 * already authenticate with the key), so this is the correct, fail-safe
+	 * posture. The HMAC-signed `/download/<slug>` route keeps its own signature
+	 * check and is unaffected.
+	 *
+	 * @param WP_REST_Request $request The REST request.
+	 *
+	 * @return true|WP_Error True if authorized, WP_Error (401) otherwise.
+	 */
+	public function require_remote_auth( WP_REST_Request $request ) {
+		// Operators performing admin-side update flows.
+		if ( current_user_can( 'update_plugins' ) || current_user_can( 'update_themes' ) ) {
+			return true;
+		}
+
+		// Shared Remote Management key (constant-time, empty-safe).
+		if ( $this->shared_key_matches( $request ) ) {
+			return true;
+		}
+
+		// Per-slug git-updater-lite client key (X-GU-Lite-Key header), for the
+		// routes that carry a slug. This is a READ-ONLY check: unlike
+		// request_is_authorized(), it never records a pending grant, so an
+		// unauthenticated caller cannot write to the grants store from the
+		// permission layer. New lite clients are enrolled by an admin (admin UI
+		// or the git_updater_lite_client_key filter), not by hitting this route.
+		// It never consults repo privacy, so it cannot fail open on an
+		// unresolved is_private — the whole point of gating here.
+		$slug = $request->get_param( 'slug' );
+		if ( is_string( $slug ) && '' !== $slug ) {
+			$lite = sanitize_text_field( (string) $request->get_header( 'X-GU-Lite-Key' ) );
+			if ( '' !== $lite
+				&& \Fragen\Git_Updater\Lite_Clients::is_approved_client_key( $slug, hash( 'sha256', $lite ) ) ) {
+				return true;
+			}
+		}
+
+		return $this->rest_forbidden();
+	}
+
+	/**
+	 * Permission gate for routes with no legitimate per-slug lite scope
+	 * (the Additions routes). Accepts only an update-capable operator or the
+	 * shared Remote Management key — never a per-slug lite key — so an
+	 * attacker-supplied, unregistered `slug` query param cannot steer these
+	 * routes into the lite branch.
+	 *
+	 * @param WP_REST_Request $request The REST request.
+	 *
+	 * @return true|WP_Error
+	 */
+	public function require_shared_key_auth( WP_REST_Request $request ) {
+		if ( current_user_can( 'update_plugins' ) || current_user_can( 'update_themes' ) ) {
+			return true;
+		}
+		if ( $this->shared_key_matches( $request ) ) {
+			return true;
+		}
+
+		return $this->rest_forbidden();
+	}
+
+	/**
+	 * Whether the request carries the correct shared Remote Management key.
+	 * Empty-safe (a missing stored or provided key never matches) and
+	 * constant-time.
+	 *
+	 * @param WP_REST_Request $request The REST request.
+	 *
+	 * @return bool
+	 */
+	private function shared_key_matches( WP_REST_Request $request ): bool {
+		$stored   = (string) get_site_option( 'git_updater_api_key' );
+		$provided = (string) $request->get_param( 'key' );
+
+		return '' !== $stored && '' !== $provided && hash_equals( $stored, $provided );
+	}
+
+	/**
+	 * Standard 401 for a denied REST request.
+	 *
+	 * @return WP_Error
+	 */
+	private function rest_forbidden(): \WP_Error {
+		return new \WP_Error(
+			'gu_rest_forbidden',
+			__( 'Git Updater: authentication is required for this endpoint.', 'git-updater' ),
+			[ 'status' => 401 ]
+		);
 	}
 
 	/**
@@ -1151,7 +1271,7 @@ class REST_API {
 		$gu_repos   = array_merge( $gu_plugins, $gu_themes );
 
 		// Don't allow non-shared repos via this API. Set via Additions tab.
-		$additions = get_site_option( 'git_updater_additions', [] );
+		$additions = $this->additions_list();
 		if ( $this->is_hard_blocked( $slug, $additions ) ) {
 			return new WP_Error(
 				'gu_private_package',

@@ -858,9 +858,9 @@ class REST_API {
 		}
 
 		// Per-slug git-updater-lite client key (X-GU-Lite-Key header), for the
-		// routes that carry a slug. This is a READ-ONLY check: unlike
-		// request_is_authorized(), it never records a pending grant, so an
-		// unauthenticated caller cannot write to the grants store from the
+		// routes that carry a slug. This is a READ-ONLY check: it calls
+		// is_approved_client_key() directly and never records a pending grant,
+		// so an unauthenticated caller cannot write to the grants store from the
 		// permission layer. New lite clients are enrolled by an admin (admin UI
 		// or the git_updater_lite_client_key filter), not by hitting this route.
 		// It never consults repo privacy, so it cannot fail open on an
@@ -909,10 +909,16 @@ class REST_API {
 	 * @return bool
 	 */
 	private function shared_key_matches( WP_REST_Request $request ): bool {
-		$stored   = (string) get_site_option( 'git_updater_api_key' );
-		$provided = (string) $request->get_param( 'key' );
+		// Guard a non-string `key` (e.g. `?key[]=x`) so the cast below never
+		// warns on an array; a non-string key is never a match anyway.
+		$provided = $request->get_param( 'key' );
+		if ( ! is_string( $provided ) || '' === $provided ) {
+			return false;
+		}
 
-		return '' !== $stored && '' !== $provided && hash_equals( $stored, $provided );
+		$stored = (string) get_site_option( 'git_updater_api_key' );
+
+		return '' !== $stored && hash_equals( $stored, $provided );
 	}
 
 	/**

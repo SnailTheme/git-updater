@@ -785,17 +785,23 @@ class Settings {
 			$arr['tab']    = ! empty( $arr['tab'] ) ? $arr['tab'] : 'git_updater_settings';
 			$arr['subtab'] = ! empty( $arr['subtab'] ) ? $arr['subtab'] : 'git_updater';
 
-			$location = add_query_arg(
-				[
-					'page'               => 'git-updater',
-					'tab'                => $arr['tab'],
-					'subtab'             => $arr['subtab'],
-					'refresh_transients' => $refresh_transients,
-					'reset'              => $reset_api_key,
-					'updated'            => $update,
-				],
-				$redirect_url
-			);
+			$args = [
+				'page'               => 'git-updater',
+				'tab'                => $arr['tab'],
+				'subtab'             => $arr['subtab'],
+				'refresh_transients' => $refresh_transients,
+				'reset'              => $reset_api_key,
+				'updated'            => $update,
+			];
+
+			/**
+			 * Filter the query args of the redirect after saving settings.
+			 *
+			 * @since 14.4.3
+			 * @param array<string, mixed> $args Query args.
+			 */
+			$args     = (array) apply_filters( 'gu_save_redirect_args', $args );
+			$location = add_query_arg( $args, $redirect_url );
 			$location = add_query_arg( '_wpnonce', wp_create_nonce( 'gu_settings' ), $location );
 			wp_safe_redirect( $location );
 			exit; // @codeCoverageIgnore
@@ -915,7 +921,14 @@ class Settings {
 		$lock    = '&nbsp;<span title="' . $lock_title . '">' . Icons::get( 'private', [ 'label' => $lock_title ] ) . '</span>';
 		$dot_org = '&nbsp;<span title="' . $dot_org_title . '">' . Icons::get( 'dot-org', [ 'label' => $dot_org_title ] ) . '</span>';
 		$dismiss = '&nbsp;<span title="' . $dismiss_title . '">' . Icons::get( 'dismiss', [ 'label' => $dismiss_title ] ) . '</span>';
+
 		printf( '<h2>' . esc_html__( 'Installed Plugins and Themes', 'git-updater' ) . '</h2>' );
+		printf(     /* translators: %s is plugin or theme icon. */
+			'<p>' . esc_html__( 'Flush individual repository caches by clicking the %1$s or %2$s icons.', 'git-updater' ) . '</p>',
+			wp_kses( Icons::get( 'plugin' ), Icons::allowed_html() ),
+			wp_kses( Icons::get( 'theme' ), Icons::allowed_html() )
+		);
+
 		foreach ( $display_data as $data ) {
 			$type_key      = str_contains( $data['type'], 'theme' ) ? 'theme' : 'plugin';
 			$dashicon      = Icons::get( $type_key ) . '&nbsp;&nbsp;';

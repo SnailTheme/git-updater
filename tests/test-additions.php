@@ -42,6 +42,59 @@ class Test_Additions extends WP_UnitTestCase {
 		$this->assertTrue( $result );
 	}
 
+	public function test_get_saved_additions_returns_only_array_rows(): void {
+		$valid = [
+			'type' => 'github_plugin',
+			'slug' => 'owner/plugin.php',
+			'uri'  => 'https://github.com/owner/plugin',
+		];
+		update_site_option( 'git_updater_additions', [ $valid, 'garbage', null, 42 ] );
+
+		$rows = Additions::get_saved_additions();
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( $valid, $rows[0] );
+		$this->assertSame( [ 0 ], array_keys( $rows ) );
+	}
+
+	public function test_get_saved_additions_returns_empty_for_scalar_option(): void {
+		update_site_option( 'git_updater_additions', 'garbage' );
+
+		$this->assertSame( [], Additions::get_saved_additions() );
+	}
+
+	public function test_get_saved_additions_returns_empty_when_option_missing(): void {
+		$this->assertSame( [], Additions::get_saved_additions() );
+	}
+
+	public function test_get_addition_id_prefers_saved_id(): void {
+		$addition = [
+			'ID'   => 'saved-id',
+			'slug' => 'owner/plugin.php',
+		];
+
+		$this->assertSame( 'saved-id', Additions::get_addition_id( $addition ) );
+	}
+
+	public function test_get_addition_id_falls_back_to_slug_hash(): void {
+		$this->assertSame( md5( 'owner/plugin.php' ), Additions::get_addition_id( [ 'slug' => 'owner/plugin.php' ] ) );
+		$this->assertSame( md5( '' ), Additions::get_addition_id( [] ) );
+	}
+
+	public function test_get_repo_cache_slug_matches_parsed_header_uri(): void {
+		$cases = [
+			'https://github.com/owner/repo'      => 'repo',
+			'https://github.com/owner/repo.git'  => 'repo',
+			'https://github.com/owner/repo/?x=1' => 'repo',
+			'https://gitlab.com/group/sub/repo'  => 'repo',
+			''                                   => '',
+		];
+
+		foreach ( $cases as $uri => $expected ) {
+			$this->assertSame( $expected, Additions::get_repo_cache_slug( $uri ), $uri );
+		}
+	}
+
 	public function test_add_source_stamps_missing_source_with_home_url_hash(): void {
 		$config = [ [ 'slug' => 'my-plugin' ] ];
 

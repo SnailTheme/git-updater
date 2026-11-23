@@ -325,8 +325,10 @@ class Test_Additions_Settings_Save_Settings extends WP_UnitTestCase {
 	public function tear_down(): void {
 		unset( $_POST['_wpnonce'], $_POST['action'] );
 		delete_site_option( 'git_updater_additions' );
+		delete_site_transient( 'gu_additions_notice_' . $this->admin_id );
 		wp_set_current_user( 0 );
 		remove_all_filters( 'gu_save_redirect' );
+		remove_all_filters( 'gu_save_redirect_args' );
 		parent::tear_down();
 	}
 
@@ -469,6 +471,17 @@ class Test_Additions_Settings_Save_Settings extends WP_UnitTestCase {
 		$_POST['_wpnonce'] = wp_create_nonce( 'git_updater_additions-options' );
 		$this->settings->save_settings( $this->make_post_data() );
 		$this->assertCount( 1, get_site_option( 'git_updater_additions' ) );
+	}
+
+	public function test_save_settings_ignores_malformed_existing_rows(): void {
+		update_site_option( 'git_updater_additions', [ 'garbage' ] );
+		$_POST['_wpnonce'] = wp_create_nonce( 'git_updater_additions-options' );
+
+		$this->settings->save_settings( $this->make_post_data() );
+
+		$saved = get_site_option( 'git_updater_additions' );
+		$this->assertCount( 1, $saved );
+		$this->assertSame( 'owner/plugin.php', $saved[0]['slug'] );
 	}
 
 	public function test_save_settings_saves_option_when_valid_and_existing_options_present(): void {
